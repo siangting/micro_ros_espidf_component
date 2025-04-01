@@ -13,6 +13,9 @@
 #include <std_msgs/msg/int32.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
+#include "driver/gpio.h"
+
+#define LED_GPIO GPIO_NUM_2
 
 #ifdef CONFIG_MICRO_ROS_ESP_XRCE_DDS_MIDDLEWARE
 #include <rmw_microros/rmw_microros.h>
@@ -40,10 +43,27 @@ void subscription_callback(const void * msgin)
 {
 	const std_msgs__msg__Int32 * msg = (const std_msgs__msg__Int32 *)msgin;
 	printf("Received: %d\n",  (int)  msg->data);
+
+	// TODO Received data number to change the sg90 angle
+
+	if (msg->data == 1) {
+		gpio_set_level(LED_GPIO, 1);
+	} else {
+		gpio_set_level(LED_GPIO, 0);
+	}
 }
 
 void micro_ros_task(void * arg)
 {
+	gpio_config_t io_conf = {
+		.pin_bit_mask = 1ULL << LED_GPIO,
+		.mode = GPIO_MODE_OUTPUT,
+		.pull_up_en = 0,
+		.pull_down_en = 0,
+		.intr_type = GPIO_INTR_DISABLE
+	};
+	gpio_config(&io_conf);
+	
 	rcl_allocator_t allocator = rcl_get_default_allocator();
 	rclc_support_t support;
 
