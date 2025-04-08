@@ -15,6 +15,15 @@
 #include <rclc/executor.h>
 #include "driver/gpio.h"
 
+#include "driver/ledc.h"
+
+uint32_t angle_to_duty_us(int angle);
+
+#define SERVO_GPIO GPIO_NUM_4   // 你可以換成你實際接 SG90 的 GPIO
+#define SERVO_MIN_PULSEWIDTH_US 500   // 0度 對應的脈衝寬度（微秒）
+#define SERVO_MAX_PULSEWIDTH_US 2400 // 180度 對應的脈衝寬度（微秒）
+#define SERVO_MAX_DEGREE 180.0
+
 #define LED_GPIO GPIO_NUM_2
 
 #ifdef CONFIG_MICRO_ROS_ESP_XRCE_DDS_MIDDLEWARE
@@ -44,13 +53,53 @@ void subscription_callback(const void * msgin)
 	const std_msgs__msg__Int32 * msg = (const std_msgs__msg__Int32 *)msgin;
 	printf("Received: %d\n",  (int)  msg->data);
 
-	// TODO Received data number to change the sg90 angle
-
+	// 控制 LED 狀態
 	if (msg->data == 1) {
 		gpio_set_level(LED_GPIO, 1);
-	} else {
+	} else if((msg->data == 0)) {
 		gpio_set_level(LED_GPIO, 0);
 	}
+
+	// 控制 SG90 角度（根據 msg->data 轉為角度）
+	int angle = msg->data;  // 預期輸入直接是角度（0–180）
+	uint32_t duty = angle_to_duty_us(angle);
+	ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
+	ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+}
+
+
+void init_servo() {
+    ledc_timer_config_t ledc_timer = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .timer_num = LEDC_TIMER_0,
+        .duty_resolution = LEDC_TIMER_16_BIT, // 分辨率越高越精細
+        .freq_hz = 50,                        // SG90 用 50Hz
+        .clk_cfg = LEDC_AUTO_CLK
+    };
+    ledc_timer_config(&ledc_timer);
+
+    ledc_channel_config_t ledc_channel = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel    = LEDC_CHANNEL_0,
+        .timer_sel  = LEDC_TIMER_0,
+        .intr_type  = LEDC_INTR_DISABLE,
+        .gpio_num   = SERVO_GPIO,
+        .duty       = 0,
+        .hpoint     = 0
+    };
+    ledc_channel_config(&ledc_channel);
+}
+
+// 將角度轉換為 PWM duty
+uint32_t angle_to_duty_us(int angle) {
+    if (angle < 0) angle = 0;
+    if (angle > 180) angle = 180;
+    int pulsewidth = SERVO_MIN_PULSEWIDTH_US +
+                     (angle * (SERVO_MAX_PULSEWIDTH_US - SERVO_MIN_PULSEWIDTH_US)) / SERVO_MAX_DEGREE;
+
+    // 根據 timer 分辨率與頻率計算 duty（注意：duty = pulse_width_us / (1_000_000 / freq) * 2^res）
+    int duty = (pulsewidth * ((1 << 16) - 1)) / (1000000 / 50);
+    return duty;
 }
 
 void micro_ros_task(void * arg)
@@ -63,6 +112,8 @@ void micro_ros_task(void * arg)
 		.intr_type = GPIO_INTR_DISABLE
 	};
 	gpio_config(&io_conf);
+
+	init_servo();
 	
 	rcl_allocator_t allocator = rcl_get_default_allocator();
 	rclc_support_t support;
